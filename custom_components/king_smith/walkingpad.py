@@ -4,13 +4,42 @@ import asyncio
 import logging
 from enum import Enum, unique
 
-from bleak import BleakError
+from bleak import BleakError, BleakClient
 from bleak.backends.device import BLEDevice
-from ph4_walkingpad.pad import Controller, WalkingPadCurStatus
+from ph4_walkingpad.pad import Controller as BaseController, Scanner, WalkingPadCurStatus
+
+try:
+    from bleak_retry_connector import establish_connection
+except ImportError:  # pragma: no cover
+    establish_connection = None
 
 from .const import BeltState, WalkingPadMode, WalkingPadStatus
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class WalkingPadController(BaseController):
+    """Controller that uses bleak-retry-connector when available."""
+
+    async def connect(self, address=None):
+        address = address or self.address
+        if not address:
+            raise ValueError("No address given to connect to")
+
+        _LOGGER.info("Connecting to %s", address)
+        kwargs = Scanner.get_bleak_kwargs()
+
+        if establish_connection is not None:
+            self.client = await establish_connection(
+                BleakClient,
+                address,
+                "WalkingPad",
+                use_services_cache=False,
+                **kwargs,
+            )
+            return self.client
+
+        return await super().connect(address)
 
 
 @unique
@@ -30,7 +59,7 @@ class WalkingPad:
 
         self._name = name
         self._ble_device = ble_device
-        self._controller = Controller()
+        self._controller = WalkingPadController(address=ble_device.address)
         self._controller.log_messages_info = False
         self._callbacks = []
         self._connection_status = WalkingPadConnectionStatus.NOT_CONNECTED
