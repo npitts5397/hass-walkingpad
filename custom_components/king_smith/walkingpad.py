@@ -4,47 +4,13 @@ import asyncio
 import logging
 from enum import Enum, unique
 
-from bleak import BleakError, BleakClient
+from bleak import BleakError
 from bleak.backends.device import BLEDevice
-from ph4_walkingpad.pad import Controller as BaseController, Scanner, WalkingPadCurStatus
-
-try:
-    from bleak_retry_connector import establish_connection
-except ImportError:  # pragma: no cover
-    establish_connection = None
+from ph4_walkingpad.pad import Controller, WalkingPadCurStatus
 
 from .const import BeltState, WalkingPadMode, WalkingPadStatus
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class WalkingPadController(BaseController):
-    """Controller that uses bleak-retry-connector when available."""
-
-    def __init__(self, address=None, ble_device=None, do_read_chars=True):
-        """Initialize with optional BLEDevice for retry connector."""
-        super().__init__(address, do_read_chars)
-        self.ble_device = ble_device
-
-    async def connect(self, address=None):
-        address = address or self.address
-        if not address:
-            raise ValueError("No address given to connect to")
-
-        _LOGGER.info("Connecting to %s", address)
-        kwargs = Scanner.get_bleak_kwargs()
-
-        if establish_connection is not None and self.ble_device:
-            self.client = await establish_connection(
-                BleakClient,
-                self.ble_device,
-                "WalkingPad",
-                use_services_cache=False,
-                **kwargs,
-            )
-            return self.client
-
-        return await super().connect(address)
 
 
 @unique
@@ -64,7 +30,7 @@ class WalkingPad:
 
         self._name = name
         self._ble_device = ble_device
-        self._controller = WalkingPadController(address=ble_device.address, ble_device=ble_device)
+        self._controller = Controller(address=ble_device.address)
         self._controller.log_messages_info = False
         self._callbacks = []
         self._connection_status = WalkingPadConnectionStatus.NOT_CONNECTED
@@ -151,7 +117,13 @@ class WalkingPad:
         lock = self._begin_cmd()
         async with lock:
             try:
-                await self._controller.disconnect()
+                # Wrap disconnect with timeout to prevent hanging on ESPhome proxies
+                async with asyncio.timeout(5):
+                    await self._controller.disconnect()
+            except TimeoutError:
+                _LOGGER.warning("Disconnect timed out, forcing disconnect")
+            except Exception as err:  # pylint: disable=broad-except
+                _LOGGER.warning("Error during disconnect: %s", err)
             finally:
                 self._connection_status = WalkingPadConnectionStatus.NOT_CONNECTED
             await self._end_cmd()
