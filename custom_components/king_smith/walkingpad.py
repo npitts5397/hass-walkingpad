@@ -21,6 +21,11 @@ _LOGGER = logging.getLogger(__name__)
 class WalkingPadController(BaseController):
     """Controller that uses bleak-retry-connector when available."""
 
+    def __init__(self, address=None, ble_device=None, do_read_chars=True):
+        """Initialize with optional BLEDevice for retry connector."""
+        super().__init__(address, do_read_chars)
+        self.ble_device = ble_device
+
     async def connect(self, address=None):
         address = address or self.address
         if not address:
@@ -29,10 +34,10 @@ class WalkingPadController(BaseController):
         _LOGGER.info("Connecting to %s", address)
         kwargs = Scanner.get_bleak_kwargs()
 
-        if establish_connection is not None:
+        if establish_connection is not None and self.ble_device:
             self.client = await establish_connection(
                 BleakClient,
-                address,
+                self.ble_device,
                 "WalkingPad",
                 use_services_cache=False,
                 **kwargs,
@@ -59,7 +64,7 @@ class WalkingPad:
 
         self._name = name
         self._ble_device = ble_device
-        self._controller = WalkingPadController(address=ble_device.address)
+        self._controller = WalkingPadController(address=ble_device.address, ble_device=ble_device)
         self._controller.log_messages_info = False
         self._callbacks = []
         self._connection_status = WalkingPadConnectionStatus.NOT_CONNECTED
